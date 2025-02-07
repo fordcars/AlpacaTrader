@@ -8,6 +8,7 @@ from typing import Optional
 
 REDIS_HOST = os.getenv('REDIS_HOST', 'redis')
 REDIS_PORT = os.getenv('REDIS_PORT', '6379')
+IS_TESTING = bool(os.getenv('IS_TESTING', 'False'))
 
 def is_market_hours() -> bool:
     """Check if current time is during US market hours (9:30 AM - 4:00 PM ET)"""
@@ -25,10 +26,14 @@ def is_market_hours() -> bool:
 
 def generate_signal() -> Optional[dict]:
     """Generate a random signal for NVDA"""
-    if not is_market_hours():
-        return None
+    if IS_TESTING:
+        odds = 0.9
+    else:
+        odds = 0.0005 # 0.5% chance of generating a signal
+        if not is_market_hours():
+            return None
     
-    if random.random() < 0.005:  # 0.5% chance of generating a signal
+    if random.random() < odds:
         return {
             "ticker": "NVDA",
             "direction": random.choice(["b", "s"])
