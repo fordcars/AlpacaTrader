@@ -13,8 +13,5 @@ class Config:
     starting_cash = 100000
 
     # Limits
-    max_open_exposure = 50000  # Maximum open exposure in dollars
-    max_price = 10000  # Maximum qty per trade in dollars
-    max_daily_loss = 20000  # Max allowable daily loss before stopping trading
-    stop_loss_pct = 0.02  # Stop loss at 2% per trade
-    take_profit_pct = 0.05  # Take profit at 5% per trade
+    max_open_exposure = 100000  # Maximum open exposure in dollars
+    max_price = 10000  # Maximum qty per trade in dollars (limit orders)
