@@ -1,14 +1,12 @@
-import alpaca_trade_api as tradeapi
-import os
+from strategy import Strategy
+from config import Config
 
-from dotenv import load_dotenv
-load_dotenv(".env")
+def start():
+    strat = Strategy(Config)
+    strat.start()
 
-ALPACA_API_KEY = os.getenv("ALPACA_API_KEY")
-ALPACA_API_SECRET = os.getenv("ALPACA_API_SECRET")
-BASE_URL = "https://paper-api.alpaca.markets"
-
-api = tradeapi.REST(ALPACA_API_KEY, ALPACA_API_SECRET, BASE_URL, api_version="v2")
+if __name__ == "__main__":
+    start()
 
 def execute_trade(symbol, qty, side, type="market", time_in_force="gtc"):
     try:
@@ -24,4 +22,4 @@ def execute_trade(symbol, qty, side, type="market", time_in_force="gtc"):
         print(f"Error executing trade: {e}")
 
 # Example trade execution (buying NVDA options - dummy example)
-execute_trade("NVDA", 1, "buy")
+#execute_trade("NVDA", 1, "buy")
