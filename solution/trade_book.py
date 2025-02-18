@@ -48,7 +48,7 @@ class TradeBook:
                 print(f"Buy risk check failed: max open exposure reached: "
                       f"${qty * pos.avg_price + pos.get_open_exposure()} > ${self.config.max_open_exposure}")
                 return False
-            if qty * price > self.config.max_price:
+            if price is not None and qty * price > self.config.max_price:
                 print(f"Buy risk check failed: max order qty ($) breached: "
                       f"${qty * price} > ${self.config.max_price}")
                 return False

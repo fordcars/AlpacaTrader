@@ -9,7 +9,7 @@ class Strategy:
         self.signals = SignalStream(config)
     
     def start(self):
-        print("Starting strategy...")
+        print("Starting strategy!")
         for signal in self.signals.get_signals():
             self._handle_signal(signal)
 
@@ -19,7 +19,7 @@ class Strategy:
             symbol=signal["ticker"],
             qty=10,
             side="buy" if signal["direction"] == "b" else "sell",
-            price=1000,
-            type="limit",
+            price=None,
+            type="market",
             time_in_force="gtc"
             )

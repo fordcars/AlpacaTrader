@@ -9,15 +9,44 @@ from datetime import datetime, timezone
 class Gateway:
     def __init__(self, config: Config):
         self.config = config
-        self.start_time = datetime.now(timezone.utc).replace(hour=9) # TODO: remove this
+        self.start_time = datetime.now().replace(hour=9).astimezone(timezone.utc)
 
         print("Setting up Alpaca API...")
         self.api = tradeapi.REST(
             config.alpaca_api_key, config.alpaca_api_secret, config.alpaca_base_url, api_version="v2")
         
+        self.trade_book = TradeBook(config, self.api)
+        self._recover_open_orders()
         self.order_monitor_thread = threading.Thread(target=self._monitor_order_updates, daemon=True)
         self.order_monitor_thread.start()
-        self.trade_book = TradeBook(config, self.api)
+
+    def _recover_open_orders(self):
+        print("Recovering open orders...")
+        processed_orders = set()
+
+        try:
+            orders = self.api.list_orders(status="open", limit=500, after=self.start_time.isoformat())
+
+            # Sort orders by update time (newest first)
+            orders = sorted(orders, key=lambda o: o.updated_at, reverse=True)
+
+            for order in orders:
+                if order.id in processed_orders:
+                    continue  # Skip already processed orders
+
+                if order.side == "buy":
+                    print(f"Applying buy order: ID={order.id}, Symbol={order.symbol}, Side={order.side}, "
+                            f"Qty={order.qty}, Price={order.limit_price}, Updated={order.updated_at}")
+                    self.trade_book.send_buy(order.symbol, int(order.qty), int(order.limit_price) if order.limit_price else None)
+                elif order.side == "sell":
+                    print(f"Applying sell order: ID={order.id}, Symbol={order.symbol}, Side={order.side}, "
+                            f"Qty={order.qty}, Price={order.limit_price}, Updated={order.updated_at}")
+                    self.trade_book.send_sell(order.symbol, int(order.qty))
+
+                # Mark order as processed
+                processed_orders.add(order.id)
+        except Exception as e:
+            print(f"Error recovering open orders: {e}")
 
     def _monitor_order_updates(self):
         print("Listening to order updates...")
