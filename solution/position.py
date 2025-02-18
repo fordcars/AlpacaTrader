@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 class Position:
     def __init__(self, alpaca_api: AlpacaAPI, symbol: str):
         self.api = alpaca_api
-        self.open_orders: dict[str, Order] = [] # Open orders for this position
+        self.open_orders: dict[str, Order] = {} # Open orders for this position
         self.asset_class: AssetClass = AssetClass.US_EQUITY
         self.symbol: str = symbol
         self.underlying_symbol: str = ""
