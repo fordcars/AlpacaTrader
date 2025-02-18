@@ -1,6 +1,5 @@
 import threading
 import time
-import alpaca_trade_api as tradeapi
 
 from config import Config
 from trade_book import TradeBook
@@ -10,15 +9,12 @@ import logging
 logger = logging.getLogger(__name__)
 
 class Gateway:
-    def __init__(self, config: Config):
+    def __init__(self, config: Config, alpaca_api):
         self.config = config
         self.start_time = datetime.now().replace(hour=9, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
-
-        logger.info("Setting up Alpaca API...")
-        self.api = tradeapi.REST(
-            config.alpaca_api_key, config.alpaca_api_secret, config.alpaca_base_url, api_version="v2")
         
-        self.trade_book = TradeBook(config, self.api)
+        self.api = alpaca_api
+        self.trade_book = TradeBook(config, alpaca_api)
         self._recover_open_orders()
         self.order_monitor_thread = threading.Thread(target=self._monitor_order_updates, daemon=True)
         self.order_monitor_thread.start()

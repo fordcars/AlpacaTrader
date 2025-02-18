@@ -5,16 +5,19 @@ import numpy as np
 from config import Config
 from gateway import Gateway
 from signal_stream import SignalStream
+from hedger import Hedger
 
 import logging
 logger = logging.getLogger(__name__)
 
 class Strategy:
-    def __init__(self, config: Config):
+    def __init__(self, config: Config, alpaca_api):
         self.config = config
-        self.gateway = Gateway(config)
+        self.gateway = Gateway(config, alpaca_api)
         self.signals = SignalStream(config)
-        self.api = self.gateway.api
+        self.hedger = Hedger(config, alpaca_api)
+
+        self.api = alpaca_api
         self.stop_current_trade = threading.Event()  # Event flag to stop execution
         self.execution_threads = {}  # Store running execution threads
 
@@ -30,15 +33,18 @@ class Strategy:
 
         # Stop any ongoing execution for the same symbol
         if symbol in self.execution_threads:
-            self.stop_execution()
+            self._stop_execution()
             self.execution_threads[symbol].join()
             del self.execution_threads[symbol]
 
         # Fetch latest market price for the symbol
-        latest_trade = self.api.get_latest_trade(symbol)
-        if not latest_trade:
-            logger.error(f"Could not fetch price for {symbol}. Skipping trade.")
-            return
+        try:
+            latest_trade = self.api.get_latest_trade(symbol)
+            if not latest_trade:
+                logger.error(f"Could not fetch price for {symbol}. Skipping trade.")
+                return
+        except Exception as e:
+            logger.error(f"Error getting latest trade: {e}")
 
         price = latest_trade.price  # Latest market price
         available_cash = self.gateway.get_available_cash()
@@ -53,6 +59,13 @@ class Strategy:
         execution_thread.daemon = True  # Ensures thread exits when program stops
         execution_thread.start()
         self.execution_threads[symbol] = execution_thread
+
+        # **After buying stock, check if a hedge is needed**
+        if side == "buy":
+            self.hedger.hedge_with_protective_put(symbol, qty, price)
+
+    def _stop_execution(self):
+        self.stop_current_trade.set()
 
     def _get_average_daily_volume(self, symbol, days=5):
         bars = self.api.get_bars(symbol, "1D", limit=days).df  # Get daily bars for the last `days`
@@ -72,9 +85,6 @@ class Strategy:
             return None
 
         return bars  # Returns a Pandas DataFrame
-    
-    def stop_execution(self):
-        self.stop_current_trade.set()
 
     # Dynamic approach
     def _execute_dynamic_trade(self, symbol, total_qty, side):
