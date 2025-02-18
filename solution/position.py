@@ -1,6 +1,7 @@
 from alpaca_api import AlpacaAPI
+from alpaca.trading.client import Order
 from alpaca.data.requests import StockLatestTradeRequest, OptionLatestTradeRequest
-from alpaca.trading.enums import AssetClass
+from alpaca.trading.enums import AssetClass, OrderSide
 
 import logging
 logger = logging.getLogger(__name__)
@@ -8,12 +9,13 @@ logger = logging.getLogger(__name__)
 class Position:
     def __init__(self, alpaca_api: AlpacaAPI, symbol: str):
         self.api = alpaca_api
+        self.open_orders: dict[str, Order] = [] # Open orders for this position
         self.asset_class: AssetClass = AssetClass.US_EQUITY
         self.symbol: str = symbol
         self.underlying_symbol: str = ""
         self.quantity: int = 0
-        self.open_orders: int = 0  # Track open order quantity
         self.avg_price = 0
+        self.open_exposure: int = 0 # Open orders' total qty
 
         self._init_position()
 
@@ -37,21 +39,55 @@ class Position:
         logger.info(
             f"Created position for {self.symbol} ({self.asset_class}) with avg price ${self.avg_price}")
 
-    def adjust_exposure(self, qty: int) -> None:
-        self.open_orders += qty
-
     def get_open_exposure(self) -> float:
-        return self.open_orders * self.avg_price
+        return self.open_exposure * self.avg_price
+    
+    def submit_order(self, order: Order):
+        self.open_orders[order.client_order_id] = order
+        if order.side == OrderSide.BUY:
+            self.open_exposure += float(order.qty)
 
-    def fill_position(self, fill_price: float, qty: int) -> None:
+    def fill_order(self, order: Order):
         if self.quantity == 0:
-            self.avg_price = fill_price
+            self.avg_price = float(order.filled_avg_price)
         else:
             self.avg_price = (self.avg_price * self.quantity +
-                              fill_price * qty) / (self.quantity + qty)
+                              order.filled_avg_price * float(order.filled_qty)) / (self.quantity + float(order.filled_qty))
+        
+        # Determine expected price (for market orders, assume latest price)
+        expected_price = float(order.limit_price) if order.limit_price else self.get_asset_latest_trade().price
+        actual_price = float(order.filled_avg_price)
 
-        self.quantity += qty
-        self.open_orders -= qty  # Reduce open orders upon fill
+        # Calculate slippage percentage
+        slippage = ((actual_price - expected_price) / expected_price) * 100
+
+        self.quantity += float(order.filled_qty)
+        if order.side == OrderSide.BUY:
+            self.open_exposure -= float(order.filled_qty)
+
+        if order.client_order_id in self.open_orders:
+            open_order = self.open_orders[order.client_order_id]
+            open_order.filled_qty = float(open_order.filled_qty) + float(order.filled_qty)
+
+            if open_order.filled_qty == float(open_order.qty):
+                logger.info(f"Open order fully filled: {order} | Slippage: {slippage:.2f}%")
+                self.open_orders.pop(order.client_order_id)
+            else:
+                fill_ratio = open_order.filled_qty/float(open_order.qty)
+                logger.info(f"Open order partially filled: {order.client_order_id}, "
+                        f"Fill Ratio={fill_ratio:.2f} | Slippage: {slippage:.2f}%")
+        else:
+            logger.warning(f"Received fill for unknown order: {order}")
+    
+    # Assumes full cancellation
+    def cancel_order(self, order: Order):
+        if order.client_order_id in self.open_orders:
+            if order.side == OrderSide.BUY:
+                self.open_exposure -= float(order.qty)
+            logger.debug(f"Canceled order: {order}")
+            self.open_orders.pop(order.client_order_id)
+        else:
+            logger.warning(f"Received cancel for unknown order: {order}")
     
     def get_asset_latest_trade(self):
         if self.asset_class == AssetClass.US_EQUITY:

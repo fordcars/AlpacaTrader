@@ -2,8 +2,9 @@ from datetime import datetime
 from config import Config
 from position import Position
 from alpaca_api import AlpacaAPI
+from alpaca.trading.client import Order
 from alpaca.data.requests import StockLatestTradeRequest
-from alpaca.trading.enums import AssetClass, ContractType
+from alpaca.trading.enums import AssetClass, ContractType, OrderSide
 from typing import Dict
 import threading
 
@@ -26,14 +27,14 @@ class TradeBook:
             if symbol not in self.positions:
                 self.positions[symbol] = Position(self.api, symbol)
             self.positions[symbol].quantity = qty
-
-    def send_buy(self, symbol: str, qty: int, price: float = 0) -> bool:
+    
+    def risk_check(self, side: OrderSide, symbol: str, qty: int, price: float = 0) -> bool:
         with self.lock:
             if symbol not in self.positions:
                 self.positions[symbol] = Position(self.api, symbol)
             pos = self.positions[symbol]
 
-            # Apply risk checks
+        if side == OrderSide.BUY:
             if qty * pos.avg_price + pos.get_open_exposure() > self.config.max_open_exposure:
                 logger.warning(f"Buy risk check failed: max open exposure reached: "
                                f"${qty * pos.avg_price + pos.get_open_exposure()} > ${self.config.max_open_exposure}")
@@ -42,76 +43,44 @@ class TradeBook:
                 logger.warning(f"Buy risk check failed: max order qty ($) breached: "
                                f"${qty * price} > ${self.config.max_price}")
                 return False
-            pos.adjust_exposure(qty)
-            return True
-
-    def send_sell(self, symbol: str, qty: int) -> bool:
-        with self.lock:
-            if symbol not in self.positions:
-                logger.warning(f"No existing position in {symbol} to sell")
-                return False
-
-            position = self.positions[symbol]
-
+        else:
             # Prevent selling if there are unfilled buy orders (wash trading)
-            if position.open_orders > 0:
+            if pos.open_exposure > 0:
                 logger.warning(
-                    f"Cannot sell {symbol}: Open buy orders exist ({position.open_orders} shares pending).")
+                    f"Cannot sell {symbol}: Open buy orders exist ({pos.open_exposure} shares pending).")
                 return False
 
-            if position.quantity < qty:
-                logger.warning(
-                    f"Not enough {symbol} to sell. Available: {position.quantity}, Attempted: {qty}")
-                return False
-
-            position.adjust_exposure(-qty)
-            return True
-
-    def fill_buy(self, symbol: str, price: float, qty: int) -> bool:
+    def submit_order(self, order: Order):
         with self.lock:
-            self.cash -= price * qty
-            if symbol not in self.positions:
-                self.positions[symbol] = Position(self.api, symbol)
-
-            self.positions[symbol].fill_position(price, qty)
-            logger.info(
-                f"Bought {qty} {symbol} @ ${price}, New Cash Balance: ${self.cash:.2f}")
-            return True
-
-    def fill_sell(self, symbol: str, price: float, qty: int) -> bool:
+            self.positions[order.symbol].submit_order(order)
+        
+    def fill_buy(self, order: Order):
         with self.lock:
-            if symbol not in self.positions or self.positions[symbol].quantity < qty:
-                logger.warning(f"Not enough {symbol} to sell")
-                return False
+            self.cash -= order.filled_avg_price * order.qty
+            if order.symbol not in self.positions:
+                self.positions[order.symbol] = Position(self.api, order.symbol)
 
-            sell_value = price * qty
-            self.cash += sell_value
-            self.positions[symbol].fill_position(price, -qty)
-
-            if self.positions[symbol].quantity == 0:
-                del self.positions[symbol]  # Remove position if fully sold
-
-            logger.info(
-                f"Sold {qty} {symbol} @ ${price}, New Cash Balance: ${self.cash:.2f}")
-            return True
-
-    def cancel_buy(self, symbol: str, qty: int):
-        with self.lock:
-            if symbol not in self.positions:
-                self.positions[symbol] = Position(self.api, symbol)
-
-            self.positions[symbol].adjust_exposure(-qty)
+            self.positions[order.symbol].fill_order(order)
             logger.debug(
-                f"Canceled buy for {qty} {symbol}, Open Exposure=${self.positions[symbol].get_open_exposure()}")
+                f"Bought {order.qty} {order.symbol} @ ${order.price}, New Cash Balance: ${self.cash:.2f}")
 
-    def cancel_sell(self, symbol: str, qty: int):
+    def fill_sell(self, order: Order):
         with self.lock:
-            if symbol not in self.positions:
-                self.positions[symbol] = Position(self.api, symbol)
+            self.cash += order.filled_avg_price * order.qty
+            if order.symbol not in self.positions:
+                self.positions[order.symbol] = Position(self.api, order.symbol)
 
-            self.positions[symbol].adjust_exposure(qty)
+            self.positions[order.symbol].fill_order(order)
             logger.debug(
-                f"Canceled sell for {qty} {symbol}, Open Exposure=${self.positions[symbol].get_open_exposure()}")
+                f"Sold {order.qty} {order.symbol} @ ${order.price}, New Cash Balance: ${self.cash:.2f}")
+            return True
+
+    def cancel_order(self, order: Order):
+        with self.lock:
+            if order.symbol in self.positions:
+                self.positions[order.symbol].cancel_order(order)
+                logger.info(
+                    f"Canceled order for {order.qty} {order.symbol}, Open Exposure=${self.positions[order.symbol].get_open_exposure()}")
 
     def get_position(self, symbol: str) -> Position:
         with self.lock:

@@ -67,11 +67,10 @@ class Gateway:
                 if order.side == OrderSide.BUY:
                     logger.debug(f"Applying buy order: ID={order.id}, Symbol={order.symbol}, Side={order.side}, "
                             f"Qty={order.qty}, Price={order.limit_price}, Updated={order.updated_at}")
-                    self.trade_book.send_buy(order.symbol, int(order.qty), int(order.limit_price) if order.limit_price else None)
                 elif order.side == OrderSide.SELL:
                     logger.debug(f"Applying sell order: ID={order.id}, Symbol={order.symbol}, Side={order.side}, "
                             f"Qty={order.qty}, Price={order.limit_price}, Updated={order.updated_at}")
-                    self.trade_book.send_sell(order.symbol, int(order.qty))
+                self.trade_book.submit_order(order)
 
                 # Mark order as processed
                 processed_orders.add(order.id)
@@ -110,20 +109,16 @@ class Gateway:
 
                     if order.status == OrderStatus.FILLED and qty > 0:
                         if side == OrderSide.BUY:
-                            self.trade_book.fill_buy(symbol, fill_price, qty)
+                            self.trade_book.fill_buy(order)
                         elif side == OrderSide.SELL:
-                            self.trade_book.fill_sell(symbol, fill_price, qty)
+                            self.trade_book.fill_sell(order)
                         logger.info(f"Order filled: ID={order.id}, Symbol={order.symbol}, Side={order.side}, "
                             f"Qty={order.qty}, Price={order.limit_price}, Updated={order.updated_at}")
 
                     elif order.status == OrderStatus.CANCELED:
                         logger.info(f"Order canceled: ID={order.id}, Symbol={order.symbol}, Side={order.side}, "
                             f"Qty={order.qty}, Price={order.limit_price}, Updated={order.updated_at}")
-
-                        if order.side == OrderSide.BUY:
-                            self.trade_book.cancel_buy(symbol, int(order.qty))
-                        elif order.side == OrderSide.SELL:
-                            self.trade_book.cancel_sell(symbol, int(order.qty))
+                        self.trade_book.cancel_order(order)
 
                     # Mark order as processed
                     processed_orders.add(order.id)
@@ -150,12 +145,8 @@ class Gateway:
                    type: OrderType = OrderType.MARKET, time_in_force: TimeInForce = TimeInForce.GTC):
         logger.debug(f"Attempting to send trade: Symbol={symbol}, Qty={qty}, "
                   f"Price={price}, Type={type}")
-        if side == OrderSide.BUY:
-            success = self.trade_book.send_buy(symbol, qty, price)
-        else:
-            success = self.trade_book.send_sell(symbol, qty)
-        if not success:
-            return
+        if not self.trade_book.risk_check(side, symbol, qty, price):
+            return None
         
         if type == OrderType.MARKET:
             order_request = MarketOrderRequest(
@@ -179,6 +170,7 @@ class Gateway:
         
         try:
             order = self.api.trade.submit_order(order_request)
+            self.trade_book.submit_order(order)
             logger.info(f"Order submitted: ID={order.id}, Symbol={order.symbol}, Side={order.side}, "
                             f"Qty={order.qty}, Price={order.limit_price}, Updated={order.updated_at}")
             return order
