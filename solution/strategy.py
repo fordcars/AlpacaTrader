@@ -19,11 +19,13 @@ class Strategy:
 
     def _handle_signal(self, signal):
         logger.info(f"Received signal: {signal}")
+        symbol = signal["ticker"]
+        side = "buy" if signal["direction"] == "b" else "sell"
 
         # Fetch latest market price for the symbol
-        latest_trade = self.api.get_latest_trade(signal["ticker"])
+        latest_trade = self.api.get_latest_trade(symbol)
         if not latest_trade:
-            logger.error(f"Could not fetch price for {signal['ticker']}. Skipping trade.")
+            logger.error(f"Could not fetch price for {symbol}. Skipping trade.")
             return
 
         price = latest_trade.price  # Latest market price
@@ -36,11 +38,11 @@ class Strategy:
         # Calculate max quantity that fits within available cash
         qty = int(available_cash / price)
 
-        self.gateway.send_trade(
-            symbol=signal["ticker"],
-            qty=qty,
-            side="buy" if signal["direction"] == "b" else "sell",
-            price=None,
-            type="market",
-            time_in_force="gtc"
-        )
+        # If qty is large, use limit order to minimize slippage
+        if qty < 50:
+            order_type = "market"
+        else:
+            order_type = "limit"
+            price = price * 1.001 if side == "buy" else price * 0.999  # Small buffer
+
+        self.gateway.send_trade(symbol, qty, side, price, type=order_type, time_in_force="gtc")
