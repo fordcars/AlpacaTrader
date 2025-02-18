@@ -18,22 +18,20 @@ services:
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - IS_TESTING=True
+      - IS_TESTING=False
     depends_on:
       redis:
         condition: service_healthy
     command: python main.py
 
-  # solution:
-  #   build: 
-  #     context: .
-  #     dockerfile: solution/Dockerfile
-  #   environment:
-  #     - REDIS_HOST=redis
-  #     - REDIS_PORT=6379
-  #   env_file:
-  #       - .env
-  #   depends_on:
-  #     redis:
-  #       condition: service_healthy
-  #   command: python main.py
+  solution:
+    build:
+      context: .
+      dockerfile: solution/Dockerfile
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    depends_on:
+      redis:
+        condition: service_healthy
+    command: python main.py

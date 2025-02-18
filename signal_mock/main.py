@@ -9,9 +9,12 @@ from typing import Optional
 import logging
 logger = logging.getLogger(__name__)
 
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+
 REDIS_HOST = os.getenv('REDIS_HOST', 'redis')
 REDIS_PORT = os.getenv('REDIS_PORT', '6379')
-IS_TESTING = bool(os.getenv('IS_TESTING', 'False'))
+IS_TESTING = os.getenv('IS_TESTING', 'False') == "True"
 
 def is_market_hours() -> bool:
     """Check if current time is during US market hours (9:30 AM - 4:00 PM ET)"""
@@ -55,6 +58,9 @@ def main():
      # Delete existing stream if it exists
     redis_client.delete('nvda')
     logger.info("Signal mock service started")
+
+    if IS_TESTING:
+        logger.info("*TESTING MODE ENABLED*")
     
     while True:
         signal = generate_signal()
