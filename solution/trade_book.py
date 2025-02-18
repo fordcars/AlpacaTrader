@@ -6,10 +6,12 @@ from alpaca.trading.client import Order
 from alpaca.data.requests import StockLatestTradeRequest
 from alpaca.trading.enums import AssetClass, ContractType, OrderSide
 from typing import Dict
+import utility
 import threading
 
 import logging
 logger = logging.getLogger(__name__)
+
 
 class TradeBook:
     def __init__(self, config: Config, alpaca_api: AlpacaAPI):
@@ -27,7 +29,7 @@ class TradeBook:
             if symbol not in self.positions:
                 self.positions[symbol] = Position(self.api, symbol)
             self.positions[symbol].quantity = qty
-    
+
     def risk_check(self, side: OrderSide, symbol: str, qty: int, price: float = 0) -> bool:
         with self.lock:
             if symbol not in self.positions:
@@ -49,11 +51,12 @@ class TradeBook:
                 logger.warning(
                     f"Cannot sell {symbol}: Open buy orders exist ({pos.open_exposure} shares pending).")
                 return False
+        return True
 
     def submit_order(self, order: Order):
         with self.lock:
             self.positions[order.symbol].submit_order(order)
-        
+
     def fill_buy(self, order: Order):
         with self.lock:
             self.cash -= order.filled_avg_price * order.qty
@@ -95,14 +98,21 @@ class TradeBook:
                 for symbol, position in self.positions.items():
                     if position.asset_class == AssetClass.US_EQUITY:
                         # Stock PnL Calculation
-                        latest_price = float(position.get_asset_latest_trade().price)
-                        position_pnl = (
-                            latest_price - position.avg_price) * position.quantity
+                        latest_price = float(utility.get_asset_latest_trade(
+                            self.api, position.symbol, position.asset_class).price)
+                        
+                        # Handle long and short positions
+                        if position.quantity > 0:  # Long position
+                            position_pnl = (latest_price - position.avg_price) * position.quantity
+                        else:  # Short position
+                            position_pnl = (position.avg_price - latest_price) * abs(position.quantity)
+
                         logger.debug(f"{symbol}: {position.quantity} units, Avg Price: ${position.avg_price:.2f}, "
-                                f"Current Price: ${latest_price:.2f}, PnL: ${position_pnl:.2f}")
+                                    f"Current Price: ${latest_price:.2f}, PnL: ${position_pnl:.2f}")
                     else:
                         # Option PnL Calculation
-                        position_pnl = self._calculate_option_pnl(symbol, position)
+                        position_pnl = self._calculate_option_pnl(
+                            symbol, position)
 
                     total_pnl += position_pnl
 
@@ -118,17 +128,20 @@ class TradeBook:
             logger.error(f"Error getting option contract: {e}")
             return 0.0
 
-        latest_price = float(position.get_asset_latest_trade().price) # Current option price
-        underlying_price = float(self.api.hist.get_stock_latest_trade(
-            StockLatestTradeRequest(symbol_or_symbols=position.underlying_symbol))[position.underlying_symbol].price)
+        latest_price = float(utility.get_asset_latest_trade(
+            self.api, position.symbol, position.asset_class).price)  # Current option price
+        underlying_price = float(utility.get_asset_latest_trade(
+            self.api, position.underlying_symbol, AssetClass.US_EQUITY).price)  # Current stock price
         is_expired = datetime.now().date() >= asset.expiration_date
 
         if is_expired:
             # Calculate intrinsic value at expiry
             if asset.type == ContractType.CALL:
-                option_value = max(underlying_price - float(asset.strike_price), 0) * 100
+                option_value = max(underlying_price -
+                                   float(asset.strike_price), 0) * 100
             else:
-                option_value = max(float(asset.strike_price) - underlying_price, 0) * 100
+                option_value = max(
+                    float(asset.strike_price) - underlying_price, 0) * 100
         else:
             # Use current market value of the option before expiry
             option_value = latest_price * 100

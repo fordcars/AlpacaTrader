@@ -1,6 +1,6 @@
+import utility
 from alpaca_api import AlpacaAPI
 from alpaca.trading.client import Order
-from alpaca.data.requests import StockLatestTradeRequest, OptionLatestTradeRequest
 from alpaca.trading.enums import AssetClass, OrderSide
 
 import logging
@@ -33,7 +33,7 @@ class Position:
             except Exception as e:
                 logger.error(f"Error getting asset: {e}")
 
-        latest_trade = self.get_asset_latest_trade()
+        latest_trade = utility.get_asset_latest_trade(self.api, self.symbol, self.asset_class)
         self.avg_price = latest_trade.price
 
         logger.info(
@@ -55,7 +55,8 @@ class Position:
                               order.filled_avg_price * float(order.filled_qty)) / (self.quantity + float(order.filled_qty))
         
         # Determine expected price (for market orders, assume latest price)
-        expected_price = float(order.limit_price) if order.limit_price else self.get_asset_latest_trade().price
+        expected_price = (float(order.limit_price) if order.limit_price
+            else utility.get_asset_latest_trade(self.api, self.symbol, self.asset_class).price)
         actual_price = float(order.filled_avg_price)
 
         # Calculate slippage percentage
@@ -88,23 +89,6 @@ class Position:
             self.open_orders.pop(order.client_order_id)
         else:
             logger.warning(f"Received cancel for unknown order: {order}")
-    
-    def get_asset_latest_trade(self):
-        if self.asset_class == AssetClass.US_EQUITY:
-            try:
-                request_params = StockLatestTradeRequest(symbol_or_symbols=self.symbol)
-                return self.api.hist.get_stock_latest_trade(request_params)[self.symbol]
-            except Exception as e:
-                logger.error(f"Error getting latest stock trade: {e}")
-                return None
-        else:
-            try:
-                # Option
-                request_params = OptionLatestTradeRequest(symbol_or_symbols=self.symbol)
-                return self.api.opt_hist.get_option_latest_trade(request_params)[self.symbol]
-            except Exception as e:
-                logger.error(f"Error getting latest option trade: {e}")
-                return None
 
     def __str__(self) -> str:
         return (f"{self.symbol}: {self.quantity} shares @ ${self.avg_price:.2f}, "
