@@ -69,58 +69,23 @@ class Strategy:
     def _stop_execution(self):
         self.stop_current_trade.set()
 
-    def _get_average_daily_volume(self, symbol, days=5):
+    def _get_bars(self, symbol, interval: TimeFrame = TimeFrame.Day, days=5):
         end_date = datetime.now()
         start_date = end_date - timedelta(days=days * 2)  # Fetch more days to account for non-trading days
 
         request_params = StockBarsRequest(
             symbol_or_symbols=symbol,
-            timeframe=TimeFrame.Day,
+            timeframe=interval,
             start=start_date,
             end=end_date,
             feed="iex"
         )
 
         try:
-            bars = self.api.hist.get_stock_bars(request_params).df
-
-            if bars.empty:
-                logger.warning(f"No volume data for {symbol}. Returning 0.")
-                return 0
-
-            # Filter the DataFrame for the specific symbol and the last 'days' entries
-            symbol_bars = bars[bars.index.get_level_values('symbol') == symbol].tail(days)
-
-            if symbol_bars.empty:
-                logger.warning(f"No volume data for {symbol} in the last {days} days. Returning 0.")
-                return 0
-
-            avg_volume = symbol_bars['volume'].mean()
-            return avg_volume
+            return self.api.hist.get_stock_bars(request_params)[symbol]
 
         except Exception as e:
             logger.error(f"Error fetching bars for {symbol}: {e}")
-            return 0
-
-    def _get_historical_data(self, symbol: str, interval: TimeFrame = TimeFrame.Minute, time_period: int = 60):
-        # Create request parameters
-        request_params = StockBarsRequest(
-            symbol_or_symbols=symbol,
-            timeframe=interval,
-            limit=time_period
-        )
-
-        try:
-            bars = self.api.hist.get_stock_bars(request_params).df
-
-            if bars.empty:
-                logger.warning(f"No historical data for {symbol}.")
-                return None
-
-            return bars  # Returns a Pandas DataFrame
-
-        except Exception as e:
-            logger.error(f"Error fetching historical data for {symbol}: {e}")
             return None
     
     def _hedge_trade(self, symbol: str, trade_qty: int, side: OrderSide, price: float, type: OrderType):
@@ -128,10 +93,10 @@ class Strategy:
         if order is not None:
             self.hedger.hedge_with_protective_put(symbol, trade_qty, self.latest_prices[symbol], side)
 
-    # Dynamic approach
     def _execute_dynamic_trade(self, symbol, total_qty, side):
         price = self.latest_prices[symbol]
-        volume = self._get_average_daily_volume(symbol)
+        bars = self._get_bars(symbol, TimeFrame.Day, 5)
+        volume = sum(bar.volume for bar in bars) / len(bars)
 
         logger.debug(f"Market Data: {symbol} Price=${price}, Daily Volume={volume}")
 
@@ -150,34 +115,9 @@ class Strategy:
 
         # **Step 3: Large Orders (VWAP or TWAP Execution)**
         if total_qty >= 500:
-            if volume > 1_000_000:  # High liquidity → Use VWAP
-                logger.info(f"Using VWAP execution for {total_qty} {symbol}")
-                self._execute_vwap(symbol, total_qty, side)
-            else:  # Low liquidity → Use TWAP
-                logger.info(f"Using TWAP execution for {total_qty} {symbol}")
-                self._execute_twap(symbol, total_qty, side)
-
-    def _execute_vwap(self, symbol, total_qty, side):
-        bars = self._get_historical_data(symbol, interval=TimeFrame.Minute, time_period=60)
-        if(bars is None):
-            # Fallback to twap
-            logger.info(f"Falling back to TWAP execution for {total_qty} {symbol}")
+            # TODO: If high liquidity, use VWAP
+            logger.info(f"Using TWAP execution for {total_qty} {symbol}")
             self._execute_twap(symbol, total_qty, side)
-            return
-        bars["vwap"] = (bars["volume"] * (bars["high"] + bars["low"] + bars["close"]) / 3).cumsum() / bars["volume"].cumsum()
-        
-        volume_distribution = bars["volume"] / bars["volume"].sum()
-        order_sizes = np.round(volume_distribution * total_qty).astype(int)
-
-        for i, row in bars.iterrows():
-            if self.stop_current_trade.is_set():  # Stop execution if flagged
-                logger.info(f"Stopping VWAP execution for {symbol} due to a new signal!")
-                return
-            trade_qty = order_sizes[i]
-            if trade_qty > 0:
-                self._hedge_trade(symbol, trade_qty, side, price=row["vwap"], type=OrderType.LIMIT)
-                logger.debug(f"VWAP Order: {trade_qty} {symbol} @ VWAP ${row['vwap']:.2f}")
-            time.sleep(1)
 
     def _execute_twap(self, symbol, total_qty, side, duration=60, interval=5):
         chunk_size = total_qty // (duration // interval)
