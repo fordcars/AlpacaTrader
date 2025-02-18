@@ -1,4 +1,6 @@
 from config import Config
+from alpaca_api import AlpacaAPI
+from alpaca.data.requests import StockLatestTradeRequest
 from typing import Dict
 import threading
 
@@ -6,11 +8,18 @@ import logging
 logger = logging.getLogger(__name__)
 
 class Position:
-    def __init__(self, alpaca_api, symbol: str):
+    def __init__(self, alpaca_api: AlpacaAPI, symbol: str):
         self.symbol: str = symbol
         self.quantity: int = 0
-        self.avg_price: float = alpaca_api.get_latest_trade(symbol).price
         self.open_orders: int = 0  # Track open order quantity
+
+        try:
+            request_params = StockLatestTradeRequest(symbol_or_symbols=symbol)
+            latest_trade = alpaca_api.hist.get_stock_latest_trade(request_params)
+            self.avg_price = latest_trade[symbol].price
+        except Exception as e:
+            logger.error(f"Error getting latest trade: {e}")
+
         logger.info(f"Created position for {self.symbol} with avg price ${self.avg_price}")
 
     def adjust_exposure(self, qty: int) -> None:
@@ -33,7 +42,7 @@ class Position:
                 f"Open Orders: {self.open_orders}, Open Exposure: ${self.get_open_exposure():.2f}")
 
 class TradeBook:
-    def __init__(self, config: Config, alpaca_api):
+    def __init__(self, config: Config, alpaca_api: AlpacaAPI):
         self.config = config
         self.api = alpaca_api
         self.lock = threading.Lock()

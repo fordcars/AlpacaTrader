@@ -1,51 +1,39 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from config import Config
+from gateway import Gateway
+from alpaca_api import AlpacaAPI
+from alpaca.trading.requests import GetOptionContractsRequest
+from alpaca.trading.enums import OrderSide, OrderStatus, OrderType, ContractType
 
 import logging
 logger = logging.getLogger(__name__)
 
 class Hedger:
-    def __init__(self, config: Config, alpaca_api):
+    def __init__(self, config: Config, alpaca_api: AlpacaAPI, gateway: Gateway):
         self.config = config
         self.api = alpaca_api
+        self.gateway = gateway
 
-    def _get_default_expiry(self):
-        """ Returns the next Friday expiry date for options. """
-        today = datetime.today()
-        days_until_friday = (4 - today.weekday()) % 7  # Friday is weekday 4
-        expiry = today + timedelta(days=days_until_friday)
-        return expiry
+    def _get_default_expiry(self) -> str:
+        today = datetime.now(timezone.utc)
+        days_until_friday = (4 - today.weekday()) % 7  # 4 represents Friday (Monday=0, Sunday=6)
+        next_friday = today + timedelta(days=days_until_friday)
+        return next_friday.strftime("%Y-%m-%d")
 
-    def _get_open_positions(self, symbol):
-        positions = self.api.list_positions()
-        return [p for p in positions if p.symbol == symbol]
+    def _get_option_symbol(self, symbol: str, strike_price: float, expiry_date: str, type: ContractType) -> str:
+        request_params = GetOptionContractsRequest(
+            underlying_symbols=[symbol],
+            expiration_date_gte=expiry_date,
+            strike_price_gte=str(strike_price),
+            type=type
+        )
+        
+        contracts = self.api.trade.get_option_contracts(request_params)
+        if(contracts.option_contracts):
+            return contracts.option_contracts[0].symbol
+        
+        return None
 
-    def _get_option_symbol(self, stock_symbol, strike_price, expiry_date, option_type):
-        # Format expiry date (convert YYYY-MM-DD to YYMMDD)
-        expiry_str = expiry_date.strftime("%y%m%d")
-
-        # Option type format ("P" for Put, "C" for Call)
-        option_code = "P" if option_type.lower() == "put" else "C"
-
-        # Format strike price (Alpaca symbols often use no decimal)
-        strike_price_str = f"{int(strike_price * 1000):05d}".lstrip("0")
-
-        # Construct the expected option symbol
-        option_symbol = f"{stock_symbol}{expiry_str}{option_code}{strike_price_str}"
-
-        # Verify the symbol exists
-        try:
-            assets = self.api.list_assets()
-            available_symbols = {asset.symbol for asset in assets}
-
-            if option_symbol in available_symbols:
-                return option_symbol
-            else:
-                logger.error(f"Option symbol {option_symbol} not found in Alpaca assets!")
-                return None
-        except Exception as e:
-            logger.error(f"Error getting option symbol: {e}")
-    
     def hedge_with_protective_put(self, symbol, stock_qty, stock_price):
         put_strike = round(stock_price * 0.98, 2)  # Strike price ~2% below current stock price
         expiry_date = self._get_default_expiry()  # Get next available expiry date
@@ -56,12 +44,14 @@ class Hedger:
         if not option_symbol:
             logger.error(f"Could not find matching option symbol for {symbol} (Put @ ${put_strike})")
             return
-
+    
         # Check if we already have a protective put for this position
-        existing_puts = self._get_open_positions(option_symbol)
-        if existing_puts:
+        try:
+            self.api.trade.get_open_position(option_symbol)
             logger.info(f"Protective put already exists for {symbol} ({option_symbol}). Skipping hedge.")
             return
+        except:
+            pass
 
         # Buy the protective put
         logger.info(f"Buying {option_contracts} protective put(s): {option_symbol} @ Strike ${put_strike}, Expiry {expiry_date}")

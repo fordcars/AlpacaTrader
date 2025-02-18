@@ -1,7 +1,11 @@
 import threading
 import time
 
+from alpaca.trading.client import GetOrdersRequest
+from alpaca.trading.requests import MarketOrderRequest, LimitOrderRequest
+from alpaca.trading.enums import OrderSide, QueryOrderStatus, TimeInForce, OrderType
 from config import Config
+from alpaca_api import AlpacaAPI
 from trade_book import TradeBook
 from datetime import datetime, timezone
 
@@ -9,7 +13,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 class Gateway:
-    def __init__(self, config: Config, alpaca_api):
+    def __init__(self, config: Config, alpaca_api: AlpacaAPI):
         self.config = config
         self.start_time = datetime.now().replace(hour=9, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
         
@@ -24,7 +28,12 @@ class Gateway:
         processed_orders = set()
 
         try:
-            orders = self.api.list_orders(status="open", limit=500, after=self.start_time.isoformat())
+            orders_request = GetOrdersRequest(
+                status=QueryOrderStatus.OPEN,
+                after=self.start_time,
+                limit=500
+            )
+            orders = self.api.trade.get_orders(filter=orders_request)
 
             # Sort orders by update time (newest first)
             orders = sorted(orders, key=lambda o: o.updated_at, reverse=True)
@@ -53,8 +62,14 @@ class Gateway:
 
         while True:
             try:
-                orders = self.api.list_orders(status="closed", limit=50, after=self.start_time.isoformat())
-                
+                # Fetch both filled and canceled orders
+                orders_request = GetOrdersRequest(
+                    status=QueryOrderStatus.CLOSED,
+                    after=self.start_time,
+                    limit=50
+                )
+                orders = self.api.trade.get_orders(filter=orders_request)
+
                 if not orders:
                     time.sleep(2)  # No new orders, wait and retry
                     continue
@@ -71,21 +86,19 @@ class Gateway:
                     fill_price = float(order.filled_avg_price) if order.filled_avg_price else None
                     side = order.side
 
-                    if order.status == "filled" and qty > 0:
-                        if side == "buy":
+                    if order.status == OrderStatus.FILLED and qty > 0:
+                        if side == OrderSide.BUY:
                             self.trade_book.fill_buy(symbol, fill_price, qty)
-                        elif side == "sell":
+                        elif side == OrderSide.SELL:
                             self.trade_book.fill_sell(symbol, fill_price, qty)
-                        logger.debug(f"Order filled: ID={order.id}, Symbol={symbol}, Side={order.side}, "
-                            f"Qty={order.filled_qty}, Price={order.filled_avg_price}, Updated={order.updated_at}")
+                        logger.debug(f"Order filled: {order}")
 
-                    elif order.status == "canceled":
-                        logger.debug(f"Order canceled: ID={order.id}, Symbol={symbol}, "
-                            f"Side={order.side}, Qty={order.qty}, Updated={order.updated_at}")
+                    elif order.status == OrderStatus.CANCELED:
+                        logger.debug(f"Order canceled: {order}")
 
-                        if order.side == "buy":
+                        if order.side == OrderSide.BUY:
                             self.trade_book.fill_buy(symbol, -int(order.qty))  # Reverse open exposure
-                        elif order.side == "sell":
+                        elif order.side == OrderSide.SELL:
                             self.trade_book.fill_sell(symbol, -int(order.qty))  # Reverse open exposure
 
                     # Mark order as processed
@@ -99,27 +112,41 @@ class Gateway:
     def get_available_cash(self):
         return self.trade_book.cash
 
-    def send_trade(self, symbol: str, qty: int, side: str, price,
-                   type: str = "market", time_in_force: str = "gtc") -> None:
+    def send_trade(self, symbol: str, qty: int, side: OrderSide, price,
+                   type: OrderType = OrderType.MARKET, time_in_force: TimeInForce = "gtc") -> None:
         logger.debug(f"Attempting to send trade: Symbol={symbol}, Qty={qty}, "
                   f"Price={price}, Type={type}")
-        if side == "buy":
+        if side == OrderSide.BUY:
             success = self.trade_book.send_buy(symbol, qty, price)
         else:
             success = self.trade_book.send_sell(symbol, qty)
         if not success:
             return
         
-        try:
-            order = self.api.submit_order(
+        if type == OrderType.MARKET:
+            order_request = MarketOrderRequest(
                 symbol=symbol,
                 qty=qty,
                 side=side,
-                type=type,
+                time_in_force=time_in_force
+            )
+        elif type == OrderType.LIMIT:
+            if price is None:
+                raise ValueError("Limit orders require a price.")
+            order_request = LimitOrderRequest(
+                symbol=symbol,
+                qty=qty,
+                side=side,
                 limit_price=price,
                 time_in_force=time_in_force
             )
-            logger.info(f"Order submitted: Symbol={order.symbol}, Price={order.filled_avg_price}, "
-                  f"Status={order.status}, Direction={order.side}")
+        else:
+            raise ValueError(f"Unsupported order type: {type}")
+        
+        try:
+            order = self.api.trade.submit_order(order_request)
+            logger.info(f"Order submitted: {order}")
+            return order
         except Exception as e:
-            logger.error(f"Error executing trade: {e}")
+            logger.error(f"Error submitting order: {e}")
+            return None
