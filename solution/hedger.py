@@ -52,11 +52,11 @@ class Hedger:
             existing_puts = None
 
         if side == OrderSide.SELL and existing_puts:
-            # If selling NVDA, sell existing protective put
             logger.info(f"Closing protective put position: {option_symbol}")
             self.gateway.send_trade(
                 symbol=option_symbol,
                 qty=option_contracts,
+                price=None,
                 side=OrderSide.SELL,
                 type=OrderType.MARKET,
                 time_in_force=TimeInForce.DAY
@@ -69,7 +69,6 @@ class Hedger:
 
         # Buy the protective put if buying NVDA
         if side == OrderSide.BUY:
-            # Buy the protective put
             logger.info(f"Buying {option_contracts} protective put(s): {option_symbol} @ Strike ${put_strike}, Expiry {expiry_date}")
             self.gateway.send_trade(
                 symbol=option_symbol,

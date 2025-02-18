@@ -24,10 +24,10 @@ class TradeBook:
     def set_cash(self, cash: float):
         self.cash = cash
 
-    def set_position(self, symbol: str, qty: int):
+    def set_position(self, symbol: str, qty: int, avg_price: float):
         with self.lock:
             if symbol not in self.positions:
-                self.positions[symbol] = Position(self.api, symbol)
+                self.positions[symbol] = Position(self.api, symbol, avg_price)
             self.positions[symbol].quantity = qty
 
     def risk_check(self, side: OrderSide, symbol: str, qty: int, price: float = 0) -> bool:
@@ -59,23 +59,23 @@ class TradeBook:
 
     def fill_buy(self, order: Order):
         with self.lock:
-            self.cash -= order.filled_avg_price * order.qty
+            self.cash -= float(order.filled_avg_price) * float(order.qty)
             if order.symbol not in self.positions:
                 self.positions[order.symbol] = Position(self.api, order.symbol)
 
             self.positions[order.symbol].fill_order(order)
             logger.debug(
-                f"Bought {order.qty} {order.symbol} @ ${order.price}, New Cash Balance: ${self.cash:.2f}")
+                f"Bought {order.qty} {order.symbol} @ ${order.filled_avg_price}, New Cash Balance: ${self.cash:.2f}")
 
     def fill_sell(self, order: Order):
         with self.lock:
-            self.cash += order.filled_avg_price * order.qty
+            self.cash += float(order.filled_avg_price) * float(order.qty)
             if order.symbol not in self.positions:
                 self.positions[order.symbol] = Position(self.api, order.symbol)
 
             self.positions[order.symbol].fill_order(order)
             logger.debug(
-                f"Sold {order.qty} {order.symbol} @ ${order.price}, New Cash Balance: ${self.cash:.2f}")
+                f"Sold {order.qty} {order.symbol} @ ${order.filled_avg_price}, New Cash Balance: ${self.cash:.2f}")
             return True
 
     def cancel_order(self, order: Order):
@@ -92,7 +92,7 @@ class TradeBook:
     def calculate_pnl(self) -> float:
         with self.lock:
             logger.debug("Calculating PnL...")
-            total_pnl = self.cash  # Start with cash balance
+            total_pnl = 0
 
             try:
                 for symbol, position in self.positions.items():
@@ -107,7 +107,7 @@ class TradeBook:
                         else:  # Short position
                             position_pnl = (position.avg_price - latest_price) * abs(position.quantity)
 
-                        logger.debug(f"{symbol}: {position.quantity} units, Avg Price: ${position.avg_price:.2f}, "
+                        logger.debug(f"PnL for {symbol}: {position.quantity} units, Avg Price: ${position.avg_price:.2f}, "
                                     f"Current Price: ${latest_price:.2f}, PnL: ${position_pnl:.2f}")
                     else:
                         # Option PnL Calculation
@@ -147,7 +147,7 @@ class TradeBook:
             option_value = latest_price * 100
 
         pnl = (option_value - position.avg_price * 100) * position.quantity
-        logger.debug(f"{symbol}: {position.quantity} units, Avg Price: ${position.avg_price}, "
+        logger.debug(f"PnL for {symbol}: {position.quantity} units, Avg Price: ${position.avg_price}, "
                      f"Current Price: ${latest_price}, Underlying: ${underlying_price}, PnL: ${pnl:.2f}")
         return pnl
 

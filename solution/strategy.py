@@ -92,6 +92,9 @@ class Strategy:
             allocation = available_cash * weight
             latest_price = self.latest_prices[symbol]
             qty = int(allocation / latest_price)
+            if qty < 1:
+                logger.debug(f"Skipping trade, target qty for {symbol} is 0")
+                continue
 
             if symbol in ["NVDA", "AMD"]:
                 # Use Market Order for quick execution

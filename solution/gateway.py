@@ -39,7 +39,7 @@ class Gateway:
             logger.info(f"Recovering {len(positions)} position(s)...")
             
             for pos in positions:
-                self.trade_book.set_position(pos.symbol, int(pos.qty))
+                self.trade_book.set_position(pos.symbol, int(pos.qty), float(pos.avg_entry_price))
                 
                 logger.debug(f"Recovered position: {pos.symbol} - {pos.qty} shares")
         except Exception as e:
@@ -102,15 +102,12 @@ class Gateway:
                     if order.id in processed_orders:
                         continue  # Skip already processed orders
 
-                    symbol = order.symbol
                     qty = int(order.filled_qty) if order.filled_qty else 0
-                    fill_price = float(order.filled_avg_price) if order.filled_avg_price else None
-                    side = order.side
 
                     if order.status == OrderStatus.FILLED and qty > 0:
-                        if side == OrderSide.BUY:
+                        if order.side == OrderSide.BUY:
                             self.trade_book.fill_buy(order)
-                        elif side == OrderSide.SELL:
+                        elif order.side == OrderSide.SELL:
                             self.trade_book.fill_sell(order)
                         logger.info(f"Order filled: ID={order.id}, Symbol={order.symbol}, Side={order.side}, "
                             f"Qty={order.qty}, Price={order.limit_price}, Updated={order.updated_at}")
