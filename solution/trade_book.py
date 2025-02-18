@@ -188,28 +188,29 @@ class TradeBook:
             return self.positions.get(symbol, Position(self.api, symbol))
 
     def calculate_pnl(self) -> float:
-        logger.debug("Calculating PnL...")
-        total_pnl = self.cash  # Start with cash balance
+        with self.lock:
+            logger.debug("Calculating PnL...")
+            total_pnl = self.cash  # Start with cash balance
 
-        try:
-            for symbol, position in self.positions.items():
-                if position.asset_class == AssetClass.US_EQUITY:
-                    # Stock PnL Calculation
-                    latest_price = float(position.get_asset_latest_trade().price)
-                    position_pnl = (
-                        latest_price - position.avg_price) * position.quantity
-                    logger.debug(f"{symbol}: {position.quantity} units, Avg Price: ${position.avg_price:.2f}, "
-                             f"Current Price: ${latest_price:.2f}, PnL: ${position_pnl:.2f}")
-                else:
-                    # Option PnL Calculation
-                    position_pnl = self._calculate_option_pnl(symbol, position)
+            try:
+                for symbol, position in self.positions.items():
+                    if position.asset_class == AssetClass.US_EQUITY:
+                        # Stock PnL Calculation
+                        latest_price = float(position.get_asset_latest_trade().price)
+                        position_pnl = (
+                            latest_price - position.avg_price) * position.quantity
+                        logger.debug(f"{symbol}: {position.quantity} units, Avg Price: ${position.avg_price:.2f}, "
+                                f"Current Price: ${latest_price:.2f}, PnL: ${position_pnl:.2f}")
+                    else:
+                        # Option PnL Calculation
+                        position_pnl = self._calculate_option_pnl(symbol, position)
 
-                total_pnl += position_pnl
+                    total_pnl += position_pnl
 
-        except Exception as e:
-            logger.error(f"Error calculating PnL: {e}")
+            except Exception as e:
+                logger.error(f"Error calculating PnL: {e}")
 
-        return total_pnl
+            return total_pnl
 
     def _calculate_option_pnl(self, symbol: str, position: Position) -> float:
         try:

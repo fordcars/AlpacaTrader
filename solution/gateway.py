@@ -21,8 +21,10 @@ class Gateway:
         self.api = alpaca_api
         self.trade_book = TradeBook(config, alpaca_api)
         self._recover_trade_state()
+
         self.order_monitor_thread = threading.Thread(target=self._monitor_order_updates, daemon=True)
         self.order_monitor_thread.start()
+        self._start_pnl_monitor()
 
     def _recover_trade_state(self):
         logger.info(f"Recovering trade state since {self.recover_time.isoformat()}")
@@ -126,13 +128,20 @@ class Gateway:
                     # Mark order as processed
                     processed_orders.add(order.id)
 
-                # Print PnL
-                logger.info(f"New PnL: {self.trade_book.calculate_pnl():.2f}")
-
                 time.sleep(2)
             except Exception as e:
                 logger.error(f"Error monitoring order updates: {e}")
                 time.sleep(5)
+
+    def _start_pnl_monitor(self):
+        def pnl_monitor():
+            while True:
+                pnl = self.trade_book.calculate_pnl()
+                logger.info(f"Current PnL: ${pnl:.2f}")
+                time.sleep(30)
+        
+        pnl_thread = threading.Thread(target=pnl_monitor, daemon=True)
+        pnl_thread.start()
 
     def get_available_cash(self):
         return self.trade_book.cash
