@@ -5,7 +5,14 @@ This repository contains a Docker Compose stack with Redis and a signal mocking 
 ## Setup
 
 1. Clone this repository
-2. Run `docker compose up` to start the stack
+2. Create a `.env` file in the `solution/` dir with your Alpaca API keys:
+
+```bash
+ALPACA_API_KEY="API_KEY_HERE"
+ALPACA_API_SECRET="API_SECRET_HERE"
+```
+
+3. Run `docker compose up` to start the stack
 
 ## Components
 
