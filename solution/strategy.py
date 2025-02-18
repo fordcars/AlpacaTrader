@@ -1,4 +1,5 @@
 import time
+import threading
 
 import numpy as np
 from config import Config
@@ -14,7 +15,9 @@ class Strategy:
         self.gateway = Gateway(config)
         self.signals = SignalStream(config)
         self.api = self.gateway.api
-    
+        self.stop_current_trade = threading.Event()  # Event flag to stop execution
+        self.execution_threads = {}  # Store running execution threads
+
     def start(self):
         logger.info("Starting strategy!")
         for signal in self.signals.get_signals():
@@ -24,6 +27,12 @@ class Strategy:
         logger.info(f"Received signal: {signal}")
         symbol = signal["ticker"]
         side = "buy" if signal["direction"] == "b" else "sell"
+
+        # Stop any ongoing execution for the same symbol
+        if symbol in self.execution_threads:
+            self.stop_execution()
+            self.execution_threads[symbol].join()
+            del self.execution_threads[symbol]
 
         # Fetch latest market price for the symbol
         latest_trade = self.api.get_latest_trade(symbol)
@@ -40,26 +49,10 @@ class Strategy:
 
         # Calculate max quantity that fits within available cash
         qty = int(available_cash / price)
-        self._execute_dynamic_trade(symbol, qty, side)
-
-    # Simple split execution
-    def _execute_split_order(self, symbol, total_qty, side, price, order_type="limit", chunk_size=10, delay=1):
-        remaining_qty = total_qty
-
-        while remaining_qty > 0:
-            trade_qty = min(chunk_size, remaining_qty)  # Take the min of chunk_size or remaining shares
-            
-            self.gateway.send_trade(
-                symbol=symbol,
-                qty=trade_qty,
-                side=side,
-                price=price,
-                type=order_type,
-                time_in_force="gtc"
-            )
-
-            remaining_qty -= trade_qty
-            time.sleep(delay)  # Small delay to avoid hitting liquidity too fast
+        execution_thread = threading.Thread(target=self._execute_dynamic_trade, args=(symbol, qty, side))
+        execution_thread.daemon = True  # Ensures thread exits when program stops
+        execution_thread.start()
+        self.execution_threads[symbol] = execution_thread
 
     def _get_average_daily_volume(self, symbol, days=5):
         bars = self.api.get_bars(symbol, "1D", limit=days).df  # Get daily bars for the last `days`
@@ -75,10 +68,13 @@ class Strategy:
         bars = self.api.get_bars(symbol, interval, limit=int(time_period[:-3])).df  # Convert "60Min" → 60 bars
 
         if bars.empty:
-            print(f"⚠️ No historical data for {symbol}.")
+            logger.warning(f"No historical data for {symbol}.")
             return None
 
         return bars  # Returns a Pandas DataFrame
+    
+    def stop_execution(self):
+        self.stop_current_trade.set()
 
     # Dynamic approach
     def _execute_dynamic_trade(self, symbol, total_qty, side):
@@ -123,6 +119,9 @@ class Strategy:
         order_sizes = np.round(volume_distribution * total_qty).astype(int)
 
         for i, row in bars.iterrows():
+            if self.stop_current_trade.is_set():  # Stop execution if flagged
+                logger.info(f"Stopping VWAP execution for {symbol} due to a new signal!")
+                return
             trade_qty = order_sizes[i]
             if trade_qty > 0:
                 self.gateway.send_trade(symbol, trade_qty, side, price=row["vwap"], type="limit")
@@ -134,8 +133,9 @@ class Strategy:
         remaining_qty = total_qty
 
         for _ in range(duration // interval):
-            if remaining_qty <= 0:
-                break
+            if remaining_qty <= 0 or self.stop_current_trade.is_set():  # Stop execution if flagged
+                logger.info(f"Stopping TWAP execution for {symbol} due to a new signal!")
+                return
 
             trade_qty = min(chunk_size, remaining_qty)
 
