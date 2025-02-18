@@ -13,5 +13,5 @@ class Config:
     starting_cash = 100000
 
     # Limits
-    max_open_exposure = 100000  # Maximum open exposure in dollars
+    max_open_exposure = 300000  # Maximum open exposure in dollars
     max_price = 10000  # Maximum qty per trade in dollars (limit orders)

@@ -1,6 +1,9 @@
 import redis
 from config import Config
 
+import logging
+logger = logging.getLogger(__name__)
+
 class SignalStream():
     def __init__(self, config: Config):
         self.config = config
@@ -9,7 +12,7 @@ class SignalStream():
             port=config.redis_port,
             decode_responses=True
         )
-        print("Waiting for signals...")
+        logger.info("Waiting for signals...")
         
     def get_signals(self):
         last_id = "$" # Latest message

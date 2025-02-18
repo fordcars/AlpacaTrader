@@ -2,13 +2,16 @@ from config import Config
 from typing import Dict
 import threading
 
+import logging
+logger = logging.getLogger(__name__)
+
 class Position:
     def __init__(self, alpaca_api, symbol: str):
         self.symbol: str = symbol
         self.quantity: int = 0
         self.avg_price: float = alpaca_api.get_latest_trade(symbol).price
         self.open_orders: int = 0  # Track open order quantity
-        print(f"Created position for {self.symbol} with avg price ${self.avg_price}")
+        logger.info(f"Created position for {self.symbol} with avg price ${self.avg_price}")
 
     def adjust_exposure(self, qty: int) -> None:
         self.open_orders += qty
@@ -45,11 +48,11 @@ class TradeBook:
             
             # Apply risk checks
             if qty * pos.avg_price + pos.get_open_exposure() > self.config.max_open_exposure:
-                print(f"Buy risk check failed: max open exposure reached: "
+                logger.warning(f"Buy risk check failed: max open exposure reached: "
                       f"${qty * pos.avg_price + pos.get_open_exposure()} > ${self.config.max_open_exposure}")
                 return False
             if price is not None and qty * price > self.config.max_price:
-                print(f"Buy risk check failed: max order qty ($) breached: "
+                logger.warning(f"Buy risk check failed: max order qty ($) breached: "
                       f"${qty * price} > ${self.config.max_price}")
                 return False
             pos.adjust_exposure(qty)
@@ -58,18 +61,18 @@ class TradeBook:
     def send_sell(self, symbol: str, qty: int, price: float = 0) -> bool:
         with self.lock:
             if symbol not in self.positions:
-                print(f"No existing position in {symbol} to sell")
+                logger.warning(f"No existing position in {symbol} to sell")
                 return False
             
             position = self.positions[symbol]
 
             # Prevent selling if there are unfilled buy orders (wash trading)
             if position.open_orders > 0:
-                print(f"Cannot sell {symbol}: Open buy orders exist ({position.open_orders} shares pending).")
+                logger.warning(f"Cannot sell {symbol}: Open buy orders exist ({position.open_orders} shares pending).")
                 return False
 
             if position.quantity < qty:
-                print(f"Not enough {symbol} to sell. Available: {position.quantity}, Attempted: {qty}")
+                logger.warning(f"Not enough {symbol} to sell. Available: {position.quantity}, Attempted: {qty}")
                 return False
             
             position.adjust_exposure(-qty)
@@ -82,13 +85,13 @@ class TradeBook:
                 self.positions[symbol] = Position(self.api, symbol)
 
             self.positions[symbol].fill_position(price, qty)
-            print(f"Bought {qty} {symbol} @ ${price}, New Cash Balance: ${self.cash:.2f}")
+            logger.info(f"Bought {qty} {symbol} @ ${price}, New Cash Balance: ${self.cash:.2f}")
             return True
 
     def fill_sell(self, symbol: str, price: float, qty: int) -> bool:
         with self.lock:
             if symbol not in self.positions or self.positions[symbol].quantity < qty:
-                print(f"Not enough {symbol} to sell")
+                logger.warning(f"Not enough {symbol} to sell")
                 return False
 
             sell_value = price * qty
@@ -98,7 +101,7 @@ class TradeBook:
             if self.positions[symbol].quantity == 0:
                 del self.positions[symbol]  # Remove position if fully sold
 
-            print(f"Sold {qty} {symbol} @ ${price}, New Cash Balance: ${self.cash:.2f}")
+            logger.info(f"Sold {qty} {symbol} @ ${price}, New Cash Balance: ${self.cash:.2f}")
             return True
 
     def get_position(self, symbol: str) -> Position:

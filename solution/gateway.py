@@ -6,12 +6,15 @@ from config import Config
 from trade_book import TradeBook
 from datetime import datetime, timezone
 
+import logging
+logger = logging.getLogger(__name__)
+
 class Gateway:
     def __init__(self, config: Config):
         self.config = config
-        self.start_time = datetime.now().replace(hour=9).astimezone(timezone.utc)
+        self.start_time = datetime.now().replace(hour=9, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
 
-        print("Setting up Alpaca API...")
+        logger.info("Setting up Alpaca API...")
         self.api = tradeapi.REST(
             config.alpaca_api_key, config.alpaca_api_secret, config.alpaca_base_url, api_version="v2")
         
@@ -21,7 +24,7 @@ class Gateway:
         self.order_monitor_thread.start()
 
     def _recover_open_orders(self):
-        print("Recovering open orders...")
+        logger.info(f"Recovering open orders from {self.start_time.isoformat()}")
         processed_orders = set()
 
         try:
@@ -35,21 +38,21 @@ class Gateway:
                     continue  # Skip already processed orders
 
                 if order.side == "buy":
-                    print(f"Applying buy order: ID={order.id}, Symbol={order.symbol}, Side={order.side}, "
+                    logger.debug(f"Applying buy order: ID={order.id}, Symbol={order.symbol}, Side={order.side}, "
                             f"Qty={order.qty}, Price={order.limit_price}, Updated={order.updated_at}")
                     self.trade_book.send_buy(order.symbol, int(order.qty), int(order.limit_price) if order.limit_price else None)
                 elif order.side == "sell":
-                    print(f"Applying sell order: ID={order.id}, Symbol={order.symbol}, Side={order.side}, "
+                    logger.debug(f"Applying sell order: ID={order.id}, Symbol={order.symbol}, Side={order.side}, "
                             f"Qty={order.qty}, Price={order.limit_price}, Updated={order.updated_at}")
                     self.trade_book.send_sell(order.symbol, int(order.qty))
 
                 # Mark order as processed
                 processed_orders.add(order.id)
         except Exception as e:
-            print(f"Error recovering open orders: {e}")
+            logger.error(f"Error recovering open orders: {e}")
 
     def _monitor_order_updates(self):
-        print("Listening to order updates...")
+        logger.info("Listening to order updates...")
         processed_orders = set()
 
         while True:
@@ -77,11 +80,11 @@ class Gateway:
                             self.trade_book.fill_buy(symbol, fill_price, qty)
                         elif side == "sell":
                             self.trade_book.fill_sell(symbol, fill_price, qty)
-                        print(f"Order filled: ID={order.id}, Symbol={symbol}, Side={order.side}, "
+                        logger.debug(f"Order filled: ID={order.id}, Symbol={symbol}, Side={order.side}, "
                             f"Qty={order.filled_qty}, Price={order.filled_avg_price}, Updated={order.updated_at}")
 
                     elif order.status == "canceled":
-                        print(f"Order canceled: ID={order.id}, Symbol={symbol}, "
+                        logger.debug(f"Order canceled: ID={order.id}, Symbol={symbol}, "
                             f"Side={order.side}, Qty={order.qty}, Updated={order.updated_at}")
 
                         if order.side == "buy":
@@ -94,11 +97,16 @@ class Gateway:
 
                 time.sleep(2)
             except Exception as e:
-                print(f"Error monitoring order updates: {e}")
+                logger.error(f"Error monitoring order updates: {e}")
                 time.sleep(5)
+
+    def get_available_cash(self):
+        return self.trade_book.cash
 
     def send_trade(self, symbol: str, qty: int, side: str, price,
                    type: str = "market", time_in_force: str = "gtc") -> None:
+        logger.debug(f"Attempting to send trade: Symbol={symbol}, Qty={qty}, "
+                  f"Price={price}, Type={type}")
         if side == "buy":
             success = self.trade_book.send_buy(symbol, qty, price)
         else:
@@ -115,7 +123,7 @@ class Gateway:
                 limit_price=price,
                 time_in_force=time_in_force
             )
-            print(f"Order submitted: Symbol={order.symbol}, Price={order.filled_avg_price}, "
+            logger.info(f"Order submitted: Symbol={order.symbol}, Price={order.filled_avg_price}, "
                   f"Status={order.status}, Direction={order.side}")
         except Exception as e:
-            print(f"Error executing trade: {e}")
+            logger.error(f"Error executing trade: {e}")

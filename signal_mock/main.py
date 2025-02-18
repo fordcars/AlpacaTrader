@@ -6,6 +6,9 @@ import pytz
 import os
 from typing import Optional
 
+import logging
+logger = logging.getLogger(__name__)
+
 REDIS_HOST = os.getenv('REDIS_HOST', 'redis')
 REDIS_PORT = os.getenv('REDIS_PORT', '6379')
 IS_TESTING = bool(os.getenv('IS_TESTING', 'False'))
@@ -51,7 +54,7 @@ def main():
     
      # Delete existing stream if it exists
     redis_client.delete('nvda')
-    print("Signal mock service started")
+    logger.info("Signal mock service started")
     
     while True:
         signal = generate_signal()
@@ -62,7 +65,7 @@ def main():
                 signal,
                 maxlen=1000
             )
-            print(f"Signal generated: {signal}")
+            logger.info(f"Signal generated: {signal}")
         
         time.sleep(4.5 + random.random() * 0.5)  # Check every second with some randomness
 
