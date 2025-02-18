@@ -1,13 +1,15 @@
+from datetime import datetime
 from config import Config
 from alpaca_api import AlpacaAPI
 from alpaca.data.requests import StockLatestTradeRequest, OptionLatestTradeRequest
-from alpaca.trading.enums import AssetClass
+from alpaca.trading.enums import AssetClass, ContractType
 from typing import Dict
 import threading
 import re
 
 import logging
 logger = logging.getLogger(__name__)
+
 
 class Position:
     def __init__(self, alpaca_api: AlpacaAPI, symbol: str):
@@ -20,7 +22,7 @@ class Position:
         self.avg_price = 0
 
         self._init_position()
-    
+
     def _init_position(self):
         # Get asset info
         try:
@@ -35,23 +37,11 @@ class Position:
             except Exception as e:
                 logger.error(f"Error getting asset: {e}")
 
-        if self.asset_class == AssetClass.US_EQUITY:
-            try:
-                request_params = StockLatestTradeRequest(symbol_or_symbols=self.symbol)
-                latest_trade = self.api.hist.get_stock_latest_trade(request_params)
-                self.avg_price = latest_trade[self.symbol].price
-            except Exception as e:
-                logger.error(f"Error getting latest stock trade: {e}")
-        else:
-            try:
-                # Option
-                request_params = OptionLatestTradeRequest(symbol_or_symbols=self.symbol)
-                latest_trade = self.api.opt_hist.get_option_latest_trade(request_params)
-                self.avg_price = latest_trade[self.symbol].price
-            except Exception as e:
-                logger.error(f"Error getting latest option trade: {e}")
+        latest_trade = self.get_asset_latest_trade()
+        self.avg_price = latest_trade.price
 
-        logger.info(f"Created position for {self.symbol} ({self.asset_class}) with avg price ${self.avg_price}")
+        logger.info(
+            f"Created position for {self.symbol} ({self.asset_class}) with avg price ${self.avg_price}")
 
     def adjust_exposure(self, qty: int) -> None:
         self.open_orders += qty
@@ -63,11 +53,29 @@ class Position:
         if self.quantity == 0:
             self.avg_price = fill_price
         else:
-            self.avg_price = (self.avg_price * self.quantity + fill_price * qty) / (self.quantity + qty)
-        
+            self.avg_price = (self.avg_price * self.quantity +
+                              fill_price * qty) / (self.quantity + qty)
+
         self.quantity += qty
         self.open_orders -= qty  # Reduce open orders upon fill
     
+    def get_asset_latest_trade(self):
+        if self.asset_class == AssetClass.US_EQUITY:
+            try:
+                request_params = StockLatestTradeRequest(symbol_or_symbols=self.symbol)
+                return self.api.hist.get_stock_latest_trade(request_params)[self.symbol]
+            except Exception as e:
+                logger.error(f"Error getting latest stock trade: {e}")
+                return None
+        else:
+            try:
+                # Option
+                request_params = OptionLatestTradeRequest(symbol_or_symbols=self.symbol)
+                return self.api.opt_hist.get_option_latest_trade(request_params)[self.symbol]
+            except Exception as e:
+                logger.error(f"Error getting latest option trade: {e}")
+                return None
+
     def __str__(self) -> str:
         return (f"{self.symbol}: {self.quantity} shares @ ${self.avg_price:.2f}, "
                 f"Open Orders: {self.open_orders}, Open Exposure: ${self.get_open_exposure():.2f}")
@@ -94,15 +102,15 @@ class TradeBook:
             if symbol not in self.positions:
                 self.positions[symbol] = Position(self.api, symbol)
             pos = self.positions[symbol]
-            
+
             # Apply risk checks
             if qty * pos.avg_price + pos.get_open_exposure() > self.config.max_open_exposure:
                 logger.warning(f"Buy risk check failed: max open exposure reached: "
-                      f"${qty * pos.avg_price + pos.get_open_exposure()} > ${self.config.max_open_exposure}")
+                               f"${qty * pos.avg_price + pos.get_open_exposure()} > ${self.config.max_open_exposure}")
                 return False
             if price is not None and qty * price > self.config.max_price:
                 logger.warning(f"Buy risk check failed: max order qty ($) breached: "
-                      f"${qty * price} > ${self.config.max_price}")
+                               f"${qty * price} > ${self.config.max_price}")
                 return False
             pos.adjust_exposure(qty)
             return True
@@ -112,18 +120,20 @@ class TradeBook:
             if symbol not in self.positions:
                 logger.warning(f"No existing position in {symbol} to sell")
                 return False
-            
+
             position = self.positions[symbol]
 
             # Prevent selling if there are unfilled buy orders (wash trading)
             if position.open_orders > 0:
-                logger.warning(f"Cannot sell {symbol}: Open buy orders exist ({position.open_orders} shares pending).")
+                logger.warning(
+                    f"Cannot sell {symbol}: Open buy orders exist ({position.open_orders} shares pending).")
                 return False
 
             if position.quantity < qty:
-                logger.warning(f"Not enough {symbol} to sell. Available: {position.quantity}, Attempted: {qty}")
+                logger.warning(
+                    f"Not enough {symbol} to sell. Available: {position.quantity}, Attempted: {qty}")
                 return False
-            
+
             position.adjust_exposure(-qty)
             return True
 
@@ -134,7 +144,8 @@ class TradeBook:
                 self.positions[symbol] = Position(self.api, symbol)
 
             self.positions[symbol].fill_position(price, qty)
-            logger.info(f"Bought {qty} {symbol} @ ${price}, New Cash Balance: ${self.cash:.2f}")
+            logger.info(
+                f"Bought {qty} {symbol} @ ${price}, New Cash Balance: ${self.cash:.2f}")
             return True
 
     def fill_sell(self, symbol: str, price: float, qty: int) -> bool:
@@ -150,16 +161,18 @@ class TradeBook:
             if self.positions[symbol].quantity == 0:
                 del self.positions[symbol]  # Remove position if fully sold
 
-            logger.info(f"Sold {qty} {symbol} @ ${price}, New Cash Balance: ${self.cash:.2f}")
+            logger.info(
+                f"Sold {qty} {symbol} @ ${price}, New Cash Balance: ${self.cash:.2f}")
             return True
-        
+
     def cancel_buy(self, symbol: str, qty: int):
         with self.lock:
             if symbol not in self.positions:
                 self.positions[symbol] = Position(self.api, symbol)
 
             self.positions[symbol].adjust_exposure(-qty)
-            logger.debug(f"Canceled buy for {qty} {symbol}, Open Exposure=${self.positions[symbol].get_open_exposure()}")
+            logger.debug(
+                f"Canceled buy for {qty} {symbol}, Open Exposure=${self.positions[symbol].get_open_exposure()}")
 
     def cancel_sell(self, symbol: str, qty: int):
         with self.lock:
@@ -167,13 +180,14 @@ class TradeBook:
                 self.positions[symbol] = Position(self.api, symbol)
 
             self.positions[symbol].adjust_exposure(qty)
-            logger.debug(f"Canceled sell for {qty} {symbol}, Open Exposure=${self.positions[symbol].get_open_exposure()}")
+            logger.debug(
+                f"Canceled sell for {qty} {symbol}, Open Exposure=${self.positions[symbol].get_open_exposure()}")
 
     def get_position(self, symbol: str) -> Position:
         with self.lock:
             return self.positions.get(symbol, Position(self.api, symbol))
-        
-    def _calculate_pnl(self) -> float:
+
+    def calculate_pnl(self) -> float:
         logger.debug("Calculating PnL...")
         total_pnl = self.cash  # Start with cash balance
 
@@ -181,24 +195,48 @@ class TradeBook:
             for symbol, position in self.positions.items():
                 if position.asset_class == AssetClass.US_EQUITY:
                     # Stock PnL Calculation
-                    latest_price = float(self.api.hist.get_stock_latest_trade(symbol)[symbol].price)
-                    position_pnl = (latest_price - position.avg_price) * position.quantity
+                    latest_price = float(position.get_asset_latest_trade().price)
+                    position_pnl = (
+                        latest_price - position.avg_price) * position.quantity
+                    logger.debug(f"{symbol}: {position.quantity} units, Avg Price: ${position.avg_price:.2f}, "
+                             f"Current Price: ${latest_price:.2f}, PnL: ${position_pnl:.2f}")
                 else:
-                    # Option PnL Calculation (Assumes option symbol structure like "NVDA240216P600")
-                    latest_price = float(self.api.opt_hist.get_option_latest_trade(symbol)[symbol].price)
-                    contracts = position.quantity
-                    option_multiplier = 100  # Each contract represents 100 shares
-                    position_pnl = (latest_price - position.avg_price) * contracts * option_multiplier
+                    # Option PnL Calculation
+                    position_pnl = self._calculate_option_pnl(symbol, position)
 
                 total_pnl += position_pnl
-
-                logger.info(f"{symbol}: {position.quantity} units, Avg Price: ${position.avg_price:.2f}, "
-                            f"Current Price: ${latest_price:.2f}, PnL: ${position_pnl:.2f}")
 
         except Exception as e:
             logger.error(f"Error calculating PnL: {e}")
 
         return total_pnl
+
+    def _calculate_option_pnl(self, symbol: str, position: Position) -> float:
+        try:
+            asset = self.api.trade.get_option_contract(symbol)
+        except Exception as e:
+            logger.error(f"Error getting option contract: {e}")
+            return 0.0
+
+        latest_price = float(position.get_asset_latest_trade().price) # Current option price
+        underlying_price = float(self.api.hist.get_stock_latest_trade(
+            StockLatestTradeRequest(symbol_or_symbols=position.underlying_symbol))[position.underlying_symbol].price)
+        is_expired = datetime.now().date() >= asset.expiration_date
+
+        if is_expired:
+            # Calculate intrinsic value at expiry
+            if asset.type == ContractType.CALL:
+                option_value = max(underlying_price - float(asset.strike_price), 0) * 100
+            else:
+                option_value = max(float(asset.strike_price) - underlying_price, 0) * 100
+        else:
+            # Use current market value of the option before expiry
+            option_value = latest_price * 100
+
+        pnl = (option_value - position.avg_price * 100) * position.quantity
+        logger.debug(f"{symbol}: {position.quantity} units, Avg Price: ${position.avg_price}, "
+                     f"Current Price: ${latest_price}, Underlying: ${underlying_price}, PnL: ${pnl:.2f}")
+        return pnl
 
     def __str__(self) -> str:
         portfolio_summary = (f"\nPortfolio Summary\n----------------------"

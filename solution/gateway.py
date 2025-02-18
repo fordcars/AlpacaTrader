@@ -126,6 +126,9 @@ class Gateway:
                     # Mark order as processed
                     processed_orders.add(order.id)
 
+                # Print PnL
+                logger.info(f"New PnL: {self.trade_book.calculate_pnl():.2f}")
+
                 time.sleep(2)
             except Exception as e:
                 logger.error(f"Error monitoring order updates: {e}")
