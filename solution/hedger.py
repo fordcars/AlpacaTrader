@@ -58,6 +58,7 @@ class Hedger:
         self.gateway.send_trade(
             symbol=option_symbol,
             qty=option_contracts,
+            price=None,
             side="buy",
             type="market",
             time_in_force="gtc"

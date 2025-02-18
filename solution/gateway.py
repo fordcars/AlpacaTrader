@@ -3,7 +3,7 @@ import time
 
 from alpaca.trading.client import GetOrdersRequest
 from alpaca.trading.requests import MarketOrderRequest, LimitOrderRequest
-from alpaca.trading.enums import OrderSide, QueryOrderStatus, TimeInForce, OrderType
+from alpaca.trading.enums import OrderSide, QueryOrderStatus, TimeInForce, OrderType, OrderStatus
 from config import Config
 from alpaca_api import AlpacaAPI
 from trade_book import TradeBook
@@ -91,10 +91,12 @@ class Gateway:
                             self.trade_book.fill_buy(symbol, fill_price, qty)
                         elif side == OrderSide.SELL:
                             self.trade_book.fill_sell(symbol, fill_price, qty)
-                        logger.debug(f"Order filled: {order}")
+                        logger.debug(f"Order filled: ID={order.id}, Symbol={order.symbol}, Side={order.side}, "
+                            f"Qty={order.qty}, Price={order.limit_price}, Updated={order.updated_at}")
 
                     elif order.status == OrderStatus.CANCELED:
-                        logger.debug(f"Order canceled: {order}")
+                        logger.debug(f"Order canceled: ID={order.id}, Symbol={order.symbol}, Side={order.side}, "
+                            f"Qty={order.qty}, Price={order.limit_price}, Updated={order.updated_at}")
 
                         if order.side == OrderSide.BUY:
                             self.trade_book.fill_buy(symbol, -int(order.qty))  # Reverse open exposure
@@ -113,7 +115,7 @@ class Gateway:
         return self.trade_book.cash
 
     def send_trade(self, symbol: str, qty: int, side: OrderSide, price,
-                   type: OrderType = OrderType.MARKET, time_in_force: TimeInForce = "gtc") -> None:
+                   type: OrderType = OrderType.MARKET, time_in_force: TimeInForce = "gtc"):
         logger.debug(f"Attempting to send trade: Symbol={symbol}, Qty={qty}, "
                   f"Price={price}, Type={type}")
         if side == OrderSide.BUY:
@@ -145,7 +147,8 @@ class Gateway:
         
         try:
             order = self.api.trade.submit_order(order_request)
-            logger.info(f"Order submitted: {order}")
+            logger.info(f"Order submitted: ID={order.id}, Symbol={order.symbol}, Side={order.side}, "
+                            f"Qty={order.qty}, Price={order.limit_price}, Updated={order.updated_at}")
             return order
         except Exception as e:
             logger.error(f"Error submitting order: {e}")

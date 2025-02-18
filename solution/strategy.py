@@ -43,6 +43,7 @@ class Strategy:
             self._stop_execution()
             self.execution_threads[symbol].join()
             del self.execution_threads[symbol]
+        self.stop_current_trade.clear()
 
         # Fetch latest market price for the symbol
         try:
@@ -123,8 +124,8 @@ class Strategy:
             return None
     
     def _hedge_trade(self, symbol: str, trade_qty: int, side: OrderSide, price: float, type: OrderType):
-        self.gateway.send_trade(symbol, trade_qty, side, price=price, type=type)
-        if side == OrderSide.BUY:
+        order = self.gateway.send_trade(symbol, trade_qty, side, price=price, type=type)
+        if order is not None and side == OrderSide.BUY:
             self.hedger.hedge_with_protective_put(symbol, trade_qty, self.latest_prices[symbol])
 
     # Dynamic approach

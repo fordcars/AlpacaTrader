@@ -12,6 +12,7 @@ class Position:
         self.symbol: str = symbol
         self.quantity: int = 0
         self.open_orders: int = 0  # Track open order quantity
+        self.avg_price = 0
 
         try:
             request_params = StockLatestTradeRequest(symbol_or_symbols=symbol)
