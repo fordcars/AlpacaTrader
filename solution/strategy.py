@@ -125,8 +125,8 @@ class Strategy:
     
     def _hedge_trade(self, symbol: str, trade_qty: int, side: OrderSide, price: float, type: OrderType):
         order = self.gateway.send_trade(symbol, trade_qty, side, price=price, type=type)
-        if order is not None and side == OrderSide.BUY:
-            self.hedger.hedge_with_protective_put(symbol, trade_qty, self.latest_prices[symbol])
+        if order is not None:
+            self.hedger.hedge_with_protective_put(symbol, trade_qty, self.latest_prices[symbol], side)
 
     # Dynamic approach
     def _execute_dynamic_trade(self, symbol, total_qty, side):

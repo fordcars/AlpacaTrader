@@ -9,9 +9,6 @@ class Config:
     alpaca_base_url = "https://paper-api.alpaca.markets"
     redis_port = 6379
 
-    # Trading
-    starting_cash = 100000
-
     # Limits
     max_open_exposure = 300000  # Maximum open exposure in dollars
     max_price = 100000  # Maximum qty per trade in dollars (limit orders)

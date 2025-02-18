@@ -1,6 +1,6 @@
 from config import Config
 from alpaca_api import AlpacaAPI
-from alpaca.data.requests import StockLatestTradeRequest
+from alpaca.data.requests import StockLatestTradeRequest, OptionLatestTradeRequest
 from typing import Dict
 import threading
 
@@ -19,7 +19,13 @@ class Position:
             latest_trade = alpaca_api.hist.get_stock_latest_trade(request_params)
             self.avg_price = latest_trade[symbol].price
         except Exception as e:
-            logger.error(f"Error getting latest trade: {e}")
+            try:
+                # Try searching for options if stock lookup failed
+                request_params = OptionLatestTradeRequest(symbol_or_symbols=symbol)
+                latest_trade = alpaca_api.opt_hist.get_option_latest_trade(request_params)
+                self.avg_price = latest_trade[symbol].price
+            except Exception as e:
+                logger.error(f"Error getting latest trade: {e}")
 
         logger.info(f"Created position for {self.symbol} with avg price ${self.avg_price}")
 
@@ -48,7 +54,16 @@ class TradeBook:
         self.api = alpaca_api
         self.lock = threading.Lock()
         self.positions: Dict[str, Position] = {}
-        self.cash: float = config.starting_cash
+        self.cash: float = 0
+
+    def set_cash(self, cash: float):
+        self.cash = cash
+
+    def set_position(self, symbol: str, qty: int):
+        with self.lock:
+            if symbol not in self.positions:
+                self.positions[symbol] = Position(self.api, symbol)
+            self.positions[symbol].quantity = qty
 
     def send_buy(self, symbol: str, qty: int, price: float = 0) -> bool:
         with self.lock:
@@ -68,7 +83,7 @@ class TradeBook:
             pos.adjust_exposure(qty)
             return True
 
-    def send_sell(self, symbol: str, qty: int, price: float = 0) -> bool:
+    def send_sell(self, symbol: str, qty: int) -> bool:
         with self.lock:
             if symbol not in self.positions:
                 logger.warning(f"No existing position in {symbol} to sell")
@@ -113,6 +128,22 @@ class TradeBook:
 
             logger.info(f"Sold {qty} {symbol} @ ${price}, New Cash Balance: ${self.cash:.2f}")
             return True
+        
+    def cancel_buy(self, symbol: str, qty: int):
+        with self.lock:
+            if symbol not in self.positions:
+                self.positions[symbol] = Position(self.api, symbol)
+
+            self.positions[symbol].adjust_exposure(-qty)
+            logger.debug(f"Canceled buy for {qty} {symbol}, Open Exposure=${self.positions[symbol].get_open_exposure()}")
+
+    def cancel_sell(self, symbol: str, qty: int):
+        with self.lock:
+            if symbol not in self.positions:
+                self.positions[symbol] = Position(self.api, symbol)
+
+            self.positions[symbol].adjust_exposure(qty)
+            logger.debug(f"Canceled sell for {qty} {symbol}, Open Exposure=${self.positions[symbol].get_open_exposure()}")
 
     def get_position(self, symbol: str) -> Position:
         with self.lock:
