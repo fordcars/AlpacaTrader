@@ -1,33 +1,57 @@
 from config import Config
 from alpaca_api import AlpacaAPI
 from alpaca.data.requests import StockLatestTradeRequest, OptionLatestTradeRequest
+from alpaca.trading.enums import AssetClass
 from typing import Dict
 import threading
+import re
 
 import logging
 logger = logging.getLogger(__name__)
 
 class Position:
     def __init__(self, alpaca_api: AlpacaAPI, symbol: str):
+        self.api = alpaca_api
+        self.asset_class: AssetClass = AssetClass.US_EQUITY
         self.symbol: str = symbol
+        self.underlying_symbol: str = ""
         self.quantity: int = 0
         self.open_orders: int = 0  # Track open order quantity
         self.avg_price = 0
 
+        self._init_position()
+    
+    def _init_position(self):
+        # Get asset info
         try:
-            request_params = StockLatestTradeRequest(symbol_or_symbols=symbol)
-            latest_trade = alpaca_api.hist.get_stock_latest_trade(request_params)
-            self.avg_price = latest_trade[symbol].price
+            self.api.trade.get_asset(self.symbol)
+            self.asset_class = AssetClass.US_EQUITY
         except Exception as e:
             try:
-                # Try searching for options if stock lookup failed
-                request_params = OptionLatestTradeRequest(symbol_or_symbols=symbol)
-                latest_trade = alpaca_api.opt_hist.get_option_latest_trade(request_params)
-                self.avg_price = latest_trade[symbol].price
+                # Try option
+                asset = self.api.trade.get_option_contract(self.symbol)
+                self.asset_class = AssetClass.US_OPTION
+                self.underlying_symbol = asset.underlying_symbol
             except Exception as e:
-                logger.error(f"Error getting latest trade: {e}")
+                logger.error(f"Error getting asset: {e}")
 
-        logger.info(f"Created position for {self.symbol} with avg price ${self.avg_price}")
+        if self.asset_class == AssetClass.US_EQUITY:
+            try:
+                request_params = StockLatestTradeRequest(symbol_or_symbols=self.symbol)
+                latest_trade = self.api.hist.get_stock_latest_trade(request_params)
+                self.avg_price = latest_trade[self.symbol].price
+            except Exception as e:
+                logger.error(f"Error getting latest stock trade: {e}")
+        else:
+            try:
+                # Option
+                request_params = OptionLatestTradeRequest(symbol_or_symbols=self.symbol)
+                latest_trade = self.api.opt_hist.get_option_latest_trade(request_params)
+                self.avg_price = latest_trade[self.symbol].price
+            except Exception as e:
+                logger.error(f"Error getting latest option trade: {e}")
+
+        logger.info(f"Created position for {self.symbol} ({self.asset_class}) with avg price ${self.avg_price}")
 
     def adjust_exposure(self, qty: int) -> None:
         self.open_orders += qty
@@ -148,6 +172,33 @@ class TradeBook:
     def get_position(self, symbol: str) -> Position:
         with self.lock:
             return self.positions.get(symbol, Position(self.api, symbol))
+        
+    def _calculate_pnl(self) -> float:
+        logger.debug("Calculating PnL...")
+        total_pnl = self.cash  # Start with cash balance
+
+        try:
+            for symbol, position in self.positions.items():
+                if position.asset_class == AssetClass.US_EQUITY:
+                    # Stock PnL Calculation
+                    latest_price = float(self.api.hist.get_stock_latest_trade(symbol)[symbol].price)
+                    position_pnl = (latest_price - position.avg_price) * position.quantity
+                else:
+                    # Option PnL Calculation (Assumes option symbol structure like "NVDA240216P600")
+                    latest_price = float(self.api.opt_hist.get_option_latest_trade(symbol)[symbol].price)
+                    contracts = position.quantity
+                    option_multiplier = 100  # Each contract represents 100 shares
+                    position_pnl = (latest_price - position.avg_price) * contracts * option_multiplier
+
+                total_pnl += position_pnl
+
+                logger.info(f"{symbol}: {position.quantity} units, Avg Price: ${position.avg_price:.2f}, "
+                            f"Current Price: ${latest_price:.2f}, PnL: ${position_pnl:.2f}")
+
+        except Exception as e:
+            logger.error(f"Error calculating PnL: {e}")
+
+        return total_pnl
 
     def __str__(self) -> str:
         portfolio_summary = (f"\nPortfolio Summary\n----------------------"

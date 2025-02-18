@@ -7,7 +7,7 @@ from alpaca.trading.enums import OrderSide, QueryOrderStatus, TimeInForce, Order
 from config import Config
 from alpaca_api import AlpacaAPI
 from trade_book import TradeBook
-from datetime import datetime, timezone
+from datetime import datetime
 
 import logging
 logger = logging.getLogger(__name__)
