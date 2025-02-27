@@ -1,10 +1,4 @@
-# NVDA Trading Assignment
-
-NOTE: Due to my schedule, I was not able to test during trading hours. The order filling code paths is mostly untested.
-
-## Effort Evaluation
-
-This solution took around 7 hrs of work. I realize I initially put too much effort on the actual trading infrastructure and risk management (trade book, positions, hedging) instead of the actual execution strategy, which is why I took a bit longer to build the solution.
+# NVDA Execution Strategy Discussion
 
 ## Execution Strategy
 
