@@ -1,6 +1,8 @@
-# NVDA Trading Assignment
+# Alpaca Toy Execution Strategy
 
-This repository contains a Docker Compose stack with Redis and a signal mocking service for NVDA trading signals.
+This repository contains a Docker Compose stack with Redis and a signal mocking service for NVDA trading signals, as well as the exeuction strategy.
+
+See [DISCUSSION.md](DISCUSSION.md) for more information on the strategy's design.
 
 ## Setup
 
